@@ -1,0 +1,2 @@
+import{Radio,Satellite,Download,Activity}from'lucide-react';
+export default function Navbar({onExport}){return <header className="navbar"><div className="brand"><div className="brand-icon"><Satellite size={20}/></div><div><b>FIRE<span>WATCH</span></b><small>NASA · FIRE ACTIVITY INTELLIGENCE</small></div></div><div className="nav-status"><span className="live-dot"/> GLOBAL OBSERVATION ARCHIVE <i/> <Radio size={14}/> ACTIVE FIRE MONITOR</div><button className="upload-btn export-nav-btn" onClick={onExport}><Download size={15}/> EXPORT CSV</button></header>}
