@@ -46,7 +46,9 @@ Never commit `.env` files, credentials, or deployment tokens. Use the host's env
 
 ## Data
 
-The sample dataset is included so the app works immediately. To use a production dataset, set `DATA_FILE_PATH` in `backend/.env` or the backend host's environment variables, then restart the API or call `POST /api/reload-data`. A replacement CSV must follow the columns expected by the API.
+The sample dataset is included so the app works immediately. To use a production dataset, set `DATA_FILE_PATH` in `backend/.env` or the backend host's environment variables, then restart the API or call `POST /api/reload-data`. The API accepts either a canonical hotspot CSV/Parquet file or the aggregated Syria grid schema (`acq_date`, `latitude`, `longitude`, `harmonized_detections`, and `harmonized_frp`, with the other aggregate columns shown in the provided sample). Install `requirements.txt` to include the Parquet reader (`pyarrow`). For aggregated grid data, raw brightness temperature and acquisition-time fields are unavailable and are returned as null/empty rather than fabricated.
+
+For a local Syria data trial, point `DATA_FILE_PATH` at `Syria_FIRMS_1km_AllConfidence.parquet` (or its CSV counterpart). The provided Syria sample contains 18,383 aggregated records from 2012 through 2025; its detection values are fractional harmonized equivalents, so calendar and anomaly counts sum `harmonized_detections` rather than counting each row as one raw fire.
 
 ## API overview
 
