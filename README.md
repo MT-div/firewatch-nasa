@@ -1,0 +1,62 @@
+# FireWatch
+
+FireWatch is an interactive fire activity observatory for exploring hotspot detections, historical burning patterns, regional anomalies, and exportable records. The repository contains a React map dashboard and a FastAPI analytics service.
+
+## Repository layout
+
+```text
+firewatch-nasa/
+├── backend/        # FastAPI API and sample dataset
+├── frontend/       # React + Vite dashboard
+├── .gitignore
+└── README.md
+```
+
+## Run locally
+
+### Backend (PowerShell)
+
+```powershell
+cd backend
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+uvicorn main:app --reload --port 8000
+```
+
+The API and interactive documentation are available at `http://localhost:8000` and `http://localhost:8000/docs`.
+
+### Frontend (second terminal)
+
+```powershell
+cd frontend
+npm ci
+Copy-Item .env.example .env
+npm run dev
+```
+
+Open `http://localhost:5173`. The frontend reads `VITE_API_URL` from its environment; the local default points to `http://localhost:8000`.
+
+## Deploy
+
+Deploy the frontend and backend as separate services connected to this same repository. Configure each host to use `frontend/` or `backend/` as that service's root directory. Set `VITE_API_URL` on the frontend to the public API URL. Set `DATA_FILE_PATH` on the backend to the dataset path, such as `./data/mock_harmonized_hotspots.csv`.
+
+Never commit `.env` files, credentials, or deployment tokens. Use the host's environment variable settings for production values. The `.env.example` files contain non-secret local defaults.
+
+## Data
+
+The sample dataset is included so the app works immediately. To use a production dataset, set `DATA_FILE_PATH` in `backend/.env` or the backend host's environment variables, then restart the API or call `POST /api/reload-data`. A replacement CSV must follow the columns expected by the API.
+
+## API overview
+
+- `GET /api/health`
+- `GET /api/hotspots`
+- `GET /api/calendar`
+- `GET /api/anomalies`
+- `GET /api/export-csv`
+- `POST /api/upload-dataset`
+- `POST /api/reload-data`
+- `POST /api/rag-placeholder`
+
+See the OpenAPI page at `/docs` while the API is running for query parameters and response schemas.
