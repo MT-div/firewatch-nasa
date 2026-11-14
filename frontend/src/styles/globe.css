@@ -1,0 +1,23 @@
+.map-panel.globe-panel{height:min(72vh,820px);min-height:500px;padding:0;border-color:#18232d;background:#05080c;overflow:hidden}
+.globe-wrap{background:radial-gradient(ellipse at 50% 52%,#101d29 0,#070b10 66%,#05070a 100%)}
+.globe-canvas{position:absolute;inset:0}
+.globe-loading{height:100%;display:grid;place-items:center;color:#9baebc}
+.map-error{position:absolute;z-index:3;top:58px;left:15px;max-width:360px;padding:10px 12px;border:1px solid #77452d;background:#211611e8;color:#ffc09b;font:10px/1.5 'DM Mono'}
+.map-mode-switch{position:absolute;z-index:3;top:15px;right:67px;display:flex;padding:3px;border:1px solid #46535c;border-radius:5px;background:#0b1118e8;box-shadow:0 4px 16px #0007}
+.map-mode-switch button{border:0;border-radius:3px;padding:8px 11px;background:transparent;color:#a9b5be;font:9px 'DM Mono';letter-spacing:.06em;cursor:pointer}
+.map-mode-switch button:hover{color:#fff;background:#202a33}.map-mode-switch button.active{background:#d66032;color:white;box-shadow:0 0 12px #d6603255}
+.terrain-hint{position:absolute;z-index:3;top:60px;right:67px;padding:8px 10px;background:#0b1118e8;border:1px solid #46535c;border-radius:3px;color:#c7d2d9;font:9px 'DM Mono'}
+.globe-canvas .maplibregl-canvas{outline:none}
+.globe-canvas .maplibregl-ctrl-group{background:#101820dd;border:1px solid #35414a;box-shadow:0 4px 18px #0008}
+.globe-canvas .maplibregl-ctrl-group button{filter:invert(.86);border-color:#34404a}
+.globe-canvas .maplibregl-ctrl-attrib{background:#0c1118d9;color:#a8b4be;font:9px 'DM Mono'}
+.globe-canvas .maplibregl-ctrl-attrib a{color:#d5a58e}
+.globe-canvas .maplibregl-ctrl-scale{background:#111923d9;border-color:#a6b0b9;color:#e1e8ec;font:9px 'DM Mono'}
+.globe-canvas .maplibregl-popup-content{background:#131920;border:1px solid #303b44;color:#e7edf1;padding:12px;box-shadow:0 9px 32px #000a}
+.globe-canvas .maplibregl-popup-close-button{color:#aab5bf;font-size:17px}
+.globe-canvas .maplibregl-popup-tip{border-top-color:#303b44;border-bottom-color:#303b44}
+.globe-wrap .map-overlay{z-index:2;top:15px;left:15px;padding:9px 11px;pointer-events:none}
+.globe-legend{position:absolute;z-index:2;bottom:16px;right:16px;display:flex;align-items:center;gap:8px;padding:9px 11px;border:1px solid #36414a;background:#0c1116df;color:#aeb9c1;font:8px 'DM Mono';letter-spacing:.06em;pointer-events:none}
+.globe-legend i{display:block;width:11px;height:11px;border-radius:50%;box-shadow:0 0 9px currentColor}
+.glow-low{color:#ffe26a;background:#ffe26a}.glow-mid{color:#ff8b31;background:#ff8b31}.glow-high{color:#ff3c1f;background:#ff3c1f}
+@media(max-width:650px){.map-panel.globe-panel{height:65vh;min-height:400px}.globe-legend{right:9px;bottom:9px;gap:5px;font-size:7px;padding:7px}.globe-legend i{width:8px;height:8px}.globe-wrap .map-overlay{top:9px;left:9px;font-size:7px}.map-mode-switch{top:54px;right:9px}.map-mode-switch button{padding:7px;font-size:8px}.terrain-hint{top:94px;right:9px}}
