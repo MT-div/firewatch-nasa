@@ -71,7 +71,10 @@ def load_data(path=None):
     if not p.is_absolute(): p = (BASE / p).resolve()
     try:
         if p.suffix.lower() in {".parquet", ".pq"}:
-            frame = pd.read_parquet(p)
+            try:
+                frame = pd.read_parquet(p, engine="pyarrow")
+            except ImportError as e:
+                raise RuntimeError("Parquet support requires pyarrow. Run: python -m pip install -r requirements.txt") from e
         elif p.suffix.lower() == ".csv":
             frame = pd.read_csv(p, low_memory=True)
         else:
@@ -86,6 +89,7 @@ def startup():
     try: load_data()
     except RuntimeError:
         fallback = BASE / "data" / "mock_harmonized_hotspots.csv"
+        if DATA_FILE.resolve() != fallback.resolve(): raise
         if fallback.exists(): load_data(fallback)
 
 def filtered(start_date=None, end_date=None, min_lat=None, max_lat=None, min_lon=None, max_lon=None, min_frp=None, confidence=None, instrument=None):
