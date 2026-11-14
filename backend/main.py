@@ -29,7 +29,9 @@ def normalize(frame: pd.DataFrame) -> pd.DataFrame:
     if set(AGGREGATED).issubset(frame.columns):
         DATA_KIND = "aggregated_grid"
         DATA_COLUMNS = list(frame.columns)
-        df = frame.copy()
+        # load_data owns this freshly-read frame, so normalize in place instead
+        # of duplicating every source column (notably large harmonized Parquet files).
+        df = frame
         df["frp"] = pd.to_numeric(df.harmonized_frp, errors="coerce")
         df["hotspot_count"] = pd.to_numeric(df.harmonized_detections, errors="coerce")
         # This product is already harmonized and aggregated. Raw sensor fields
