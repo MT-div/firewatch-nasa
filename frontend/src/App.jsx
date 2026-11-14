@@ -23,9 +23,9 @@ export default function App() {
   const [expandedPanel,setExpandedPanel]=useState(null),[showLeft,setShowLeft]=useState(true),[showRight,setShowRight]=useState(true);
   const [filtersOpen,setFiltersOpen]=useState(false),[country,setCountry]=useState({name:'Locating country…',bounds:null,center:null});
   const [analysisRunning,setAnalysisRunning]=useState(false),[calendarRunning,setCalendarRunning]=useState(false),[exportOpen,setExportOpen]=useState(false),[exportCountry,setExportCountry]=useState(''),[exportStart,setExportStart]=useState(''),[exportEnd,setExportEnd]=useState('');
-  const lookupTimer=useRef(),lookupId=useRef(0);
-  const refresh=useCallback(async()=>{setLoading(true);setError('');try{const spatial=boxParams(bounds);const hot=await get('/api/hotspots',{...filters,...spatial,limit:2500,include_summary:false});setPoints(hot.points||[])}catch(e){setError(`${e.message}. Start the API at http://localhost:8000.`)}finally{setLoading(false)}},[filters,bounds]);
-  useEffect(()=>{refresh()},[refresh]);
+  const lookupTimer=useRef(),lookupId=useRef(0),retryTimer=useRef(null),retryCount=useRef(0),requestId=useRef(0);
+  const refresh=useCallback(async()=>{const id=++requestId.current;clearTimeout(retryTimer.current);setLoading(true);setError('');try{const spatial=boxParams(bounds);const hot=await get('/api/hotspots',{...filters,...spatial,limit:1500,include_summary:false});if(id!==requestId.current)return;retryCount.current=0;setPoints(hot.points||[])}catch(e){if(id!==requestId.current)return;setError(`${e.message}. Waiting for the API at http://localhost:8000 and retrying…`);retryCount.current+=1;const delay=Math.min(10000,1000*2**Math.min(retryCount.current-1,3));retryTimer.current=setTimeout(()=>refresh(),delay)}finally{if(id===requestId.current)setLoading(false)}},[filters,bounds]);
+  useEffect(()=>{refresh();return()=>{clearTimeout(retryTimer.current);requestId.current+=1}},[refresh]);
   function chooseRegion(b,name='Global'){setRegion(name);setBounds(b||[-78,82,-180,180]);setViewBounds(b||[-78,82,-180,180])}
   function applyFilters(next,coords){setFilters(next);if(coords?.lat!==''&&coords?.lon!==''){const lat=Number(coords.lat),lon=Number(coords.lon),r=Math.max(1,Number(coords.radius)||100)/111;if(Number.isFinite(lat)&&Number.isFinite(lon)&&lat>=-90&&lat<=90&&lon>=-180&&lon<=180){const dx=r/Math.max(.2,Math.cos(lat*Math.PI/180));chooseRegion([lat-r,lat+r,lon-dx,lon+dx],'Coordinates')}}setFiltersOpen(false)}
   function currentMap(){if(viewBounds){setBounds(viewBounds);setRegion('Map selection')}}
