@@ -13,11 +13,14 @@ import { get, exportCsv } from './api';
 const today = new Date();
 const dateString = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const boxParams = b => b ? ({ min_lat:b[0], max_lat:b[1], min_lon:b[2], max_lon:b[3] }) : {};
+const MAP_VIEW_KEY='firewatch-selected-map-view';
+function readSavedMapView(){try{const saved=JSON.parse(localStorage.getItem(MAP_VIEW_KEY)||'null');if(Array.isArray(saved?.bounds)&&saved.bounds.length===4&&saved.bounds.every(Number.isFinite))return saved}catch{}return null}
 
 export default function App() {
-  const [filters,setFilters]=useState({start_date:'2005-01-01',end_date:dateString(today),confidence:''}),[draftFilters,setDraftFilters]=useState({start_date:'2005-01-01',end_date:dateString(today),confidence:''});
+  const savedMapView=readSavedMapView();
+  const [filters,setFilters]=useState({start_date:'2005-01-01',end_date:dateString(today)}),[draftFilters,setDraftFilters]=useState({start_date:'2005-01-01',end_date:dateString(today)});
   const [points,setPoints]=useState([]),[calendar,setCalendar]=useState(null),[calendarReady,setCalendarReady]=useState(false),[anomaly,setAnomaly]=useState(null);
-  const [bounds,setBounds]=useState(null),[viewBounds,setViewBounds]=useState(null),[region,setRegion]=useState('Global');
+  const [bounds,setBounds]=useState(savedMapView?.bounds||null),[viewBounds,setViewBounds]=useState(savedMapView?.bounds||null),[region,setRegion]=useState(savedMapView?.region||'Global');
   const [metric,setMetric]=useState('count'),[period,setPeriod]=useState([today.getFullYear(),today.getMonth()+1]);
   const [error,setError]=useState(''),[loading,setLoading]=useState(false),[toast,setToast]=useState('');
   const [expandedPanel,setExpandedPanel]=useState(null),[showLeft,setShowLeft]=useState(true),[showRight,setShowRight]=useState(true);
@@ -26,9 +29,9 @@ export default function App() {
   const lookupTimer=useRef(),lookupId=useRef(0),retryTimer=useRef(null),retryCount=useRef(0),requestId=useRef(0);
   const refresh=useCallback(async()=>{const id=++requestId.current;clearTimeout(retryTimer.current);setLoading(true);setError('');try{const spatial=boxParams(bounds);const hot=await get('/api/hotspots',{...filters,...spatial,limit:1500,include_summary:false});if(id!==requestId.current)return;retryCount.current=0;setPoints(hot.points||[])}catch(e){if(id!==requestId.current)return;setError(`${e.message}. Waiting for the API at http://localhost:8000 and retrying…`);retryCount.current+=1;const delay=Math.min(10000,1000*2**Math.min(retryCount.current-1,3));retryTimer.current=setTimeout(()=>refresh(),delay)}finally{if(id===requestId.current)setLoading(false)}},[filters,bounds]);
   useEffect(()=>{refresh();return()=>{clearTimeout(retryTimer.current);requestId.current+=1}},[refresh]);
-  function chooseRegion(b,name='Global'){const next=b||[-78,82,-180,180];setRegion(name);setBounds(next);setViewBounds(next)}
+  function chooseRegion(b,name='Global'){const next=b||[-78,82,-180,180];setRegion(name);setBounds(next);setViewBounds(next);try{localStorage.setItem(MAP_VIEW_KEY,JSON.stringify({bounds:next,region:name}))}catch{}}
   function applyFilters(next,coords){setFilters(next);if(coords?.lat!==''&&coords?.lon!==''){const lat=Number(coords.lat),lon=Number(coords.lon),r=Math.max(1,Number(coords.radius)||100)/111;if(Number.isFinite(lat)&&Number.isFinite(lon)&&lat>=-90&&lat<=90&&lon>=-180&&lon<=180){const dx=r/Math.max(.2,Math.cos(lat*Math.PI/180));chooseRegion([lat-r,lat+r,lon-dx,lon+dx],'Coordinates')}}setFiltersOpen(false)}
-  function currentMap(){if(viewBounds){setBounds(viewBounds);setRegion('Map selection')}}
+  function currentMap(){if(viewBounds){setBounds(viewBounds);setRegion('Map selection');try{localStorage.setItem(MAP_VIEW_KEY,JSON.stringify({bounds:viewBounds,region:'Map selection'}))}catch{}}}
   function togglePanel(name){setExpandedPanel(v=>v===name?null:name)}
   function selectCell(y,m){setPeriod([y,m]);setAnomaly(null);const next={...draftFilters,start_date:`${y}-${String(m).padStart(2,'0')}-01`,end_date:dateString(new Date(y,m,0))};setDraftFilters(next);setFilters(next)}
   async function trackCenter(center){if(!center||!Number.isFinite(center.lat)||!Number.isFinite(center.lon))return;clearTimeout(lookupTimer.current);lookupTimer.current=setTimeout(async()=>{const id=++lookupId.current;try{const url=`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=3&lat=${center.lat}&lon=${center.lon}`;const r=await fetch(url,{headers:{'Accept-Language':'en'}});const data=await r.json();const name=data.address?.country||'International waters';let countryBounds=null;if(data.address?.country){const s=await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&featureType=country&limit=1&q=${encodeURIComponent(name)}`,{headers:{'Accept-Language':'en'}});const rows=await s.json();if(rows[0]?.boundingbox){const [south,north,west,east]=rows[0].boundingbox.map(Number);countryBounds=[south,north,west,east]}}if(id===lookupId.current){if(country.name!==name)setAnomaly(null);setCountry({name,bounds:countryBounds,center});setExportCountry(name)}}catch{if(id===lookupId.current)setCountry(c=>({...c,center}))}},1000)}
