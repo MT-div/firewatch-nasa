@@ -18,10 +18,10 @@ firewatch-nasa/
 
 ```powershell
 cd backend
-py -m venv .venv
+python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 uvicorn main:app --reload --port 8000
 ```
 
@@ -32,7 +32,7 @@ The API and interactive documentation are available at `http://localhost:8000` a
 ```powershell
 cd frontend
 npm ci
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 npm run dev
 ```
 
@@ -46,7 +46,9 @@ Never commit `.env` files, credentials, or deployment tokens. Use the host's env
 
 ## Data
 
-The sample dataset is included so the app works immediately. To use a production dataset, set `DATA_FILE_PATH` in `backend/.env` or the backend host's environment variables, then restart the API or call `POST /api/reload-data`. The API accepts either a canonical hotspot CSV/Parquet file or the aggregated Syria grid schema (`acq_date`, `latitude`, `longitude`, `harmonized_detections`, and `harmonized_frp`, with the other aggregate columns shown in the provided sample). Install `requirements.txt` to include the Parquet reader (`pyarrow`). For aggregated grid data, raw brightness temperature and acquisition-time fields are unavailable and are returned as null/empty rather than fabricated.
+The API accepts either a canonical hotspot CSV/Parquet file, one aggregated Parquet file, or a directory/glob containing annual Parquet files with the same harmonized aggregate schema. For a local folder of annual files, set `DATA_FILE_PATH` to the folder path in `backend/.env` (for example, `C:/data/firewatch/harmonized`). It discovers all `.parquet` files and reads them with DuckDB on demand instead of loading the full dataset into Pandas. Configure `DUCKDB_MEMORY_LIMIT`, `DUCKDB_THREADS`, and `DUCKDB_TEMP_DIRECTORY` for available resources. `GET /api/metadata` reports row count, file list, and available years; the calendar and anomaly endpoints use the years found in the files. For aggregated data, raw brightness-temperature and acquisition-time fields are unavailable and are returned as null/empty rather than fabricated.
+
+The current local trial uses three annual files (2023–2025) in the `Harmomized` folder. Together they contain approximately 66.7 million rows and 2.33 GB. The ignored local `backend/.env` points to that folder; preserve its `DATA_FILE_PATH` when starting the app. Keep the Parquet files outside Git; the API only needs their local folder path. The anomaly baseline is limited to the years actually present in the selected dataset.
 
 For a local Syria data trial, point `DATA_FILE_PATH` at `Syria_FIRMS_1km_AllConfidence.parquet` (or its CSV counterpart). The provided Syria sample contains 18,383 aggregated records from 2012 through 2025; its detection values are fractional harmonized equivalents, so calendar and anomaly counts sum `harmonized_detections` rather than counting each row as one raw fire.
 

@@ -20,3 +20,7 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+backend/.cache/
+backend/data/**/*.parquet
+backend/data/**/*.csv
+!backend/data/mock_harmonized_hotspots.csv
