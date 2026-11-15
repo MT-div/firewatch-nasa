@@ -99,13 +99,57 @@ class AggregateParquetStore:
             f"FROM read_parquet([{file_list}], union_by_name = true)"
         )
 
+    @classmethod
+    def from_remote_glob(cls, pattern: str, memory_limit: str, threads: int, temp_directory: Path) -> "AggregateParquetStore":
+        """Build a store that reads a Parquet file/glob directly from a remote
+        hf:// path, without downloading it to local disk."""
+        self = cls.__new__(cls)
+        self.files = [pattern]
+        self.bytes = 0
+        self.lock = threading.RLock()
+        temp_directory.mkdir(parents=True, exist_ok=True)
+
+        self.connection = duckdb.connect(database=":memory:")
+        self.connection.execute(f"SET memory_limit = {_sql_string(memory_limit)}")
+        self.connection.execute(f"SET threads = {max(1, int(threads))}")
+        self.connection.execute("SET enable_progress_bar = false")
+        self.connection.execute("SET enable_progress_bar_print = false")
+        self.connection.execute(f"SET temp_directory = {_sql_string(str(temp_directory.resolve()).replace(chr(92), '/'))}")
+        self.connection.execute("INSTALL httpfs")
+        self.connection.execute("LOAD httpfs")
+
+        raw_query = f"SELECT * FROM read_parquet({_sql_string(pattern)}, union_by_name = true)"
+        described = self.connection.execute(f"DESCRIBE {raw_query}").fetchdf()
+        schema_columns = described["column_name"].tolist()
+        missing = AGGREGATED_COLUMNS - set(schema_columns)
+        if missing:
+            raise ValueError("Remote dataset is missing harmonized aggregate columns: " + ", ".join(sorted(missing)))
+        self.columns = schema_columns
+
+        self.connection.execute(
+            "CREATE VIEW harmonized AS "
+            "SELECT *, CAST(acq_date AS DATE) AS _date, "
+            "CAST(harmonized_frp AS DOUBLE) AS _frp, "
+            "CAST(harmonized_detections AS DOUBLE) AS _detections "
+            f"FROM ({raw_query}) AS src"
+        )
+
+        rows, min_date, max_date = self.connection.execute(
+            "SELECT COUNT(*), MIN(_date), MAX(_date) FROM harmonized"
+        ).fetchone()
+        self.rows = int(rows)
+        self.min_date = min_date.isoformat() if min_date is not None else None
+        self.max_date = max_date.isoformat() if max_date is not None else None
+        self.years = set(range(min_date.year, max_date.year + 1)) if min_date and max_date else set()
+        return self
+    
     @property
     def metadata(self) -> dict:
         return {
             "dataset_kind": "aggregated_grid",
             "rows": self.rows,
             "file_count": len(self.files),
-            "file_names": [path.name for path in self.files],
+            "file_names": [path.name if isinstance(path, Path) else str(path) for path in self.files],
             "file_bytes": self.bytes,
             "available_years": sorted(self.years),
             "min_date": self.min_date,

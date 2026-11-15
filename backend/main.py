@@ -16,8 +16,12 @@ from parquet_store import AGGREGATED_COLUMNS, AggregateParquetStore
 
 BASE = Path(__file__).resolve().parent
 load_dotenv(BASE / ".env")
-DATA_FILE = Path(os.getenv("DATA_FILE_PATH", "./data/mock_harmonized_hotspots.csv"))
-if not DATA_FILE.is_absolute(): DATA_FILE = (BASE / DATA_FILE).resolve()
+_raw_data_path = os.getenv("DATA_FILE_PATH", "./data/mock_harmonized_hotspots.csv")
+if _raw_data_path.startswith("hf://"):
+    DATA_FILE = Path(_raw_data_path)  
+else:
+    DATA_FILE = Path(_raw_data_path)
+    if not DATA_FILE.is_absolute(): DATA_FILE = (BASE / DATA_FILE).resolve()
 REQUIRED = ["latitude","longitude","bright_ti4","scan","track","acq_date","acq_time","satellite","instrument","confidence","version","bright_ti5","frp","daynight","type"]
 AGGREGATED = ["acq_date","year_month","lat_grid","lon_grid","latitude","longitude","modis_frp_sum","viirs_frp_sum","harmonized_detections","harmonized_frp"]
 LOCK = threading.RLock()
@@ -71,6 +75,23 @@ def normalize(frame: pd.DataFrame) -> pd.DataFrame:
 
 def load_data(path=None):
     global DATA, DATA_FILE, DATA_KIND, DATA_COLUMNS, PARQUET_STORE
+    raw = str(path) if path else os.getenv("DATA_FILE_PATH", str(DATA_FILE))
+    if raw.startswith("hf://"):
+        memory_limit = os.getenv("DUCKDB_MEMORY_LIMIT", "768MB")
+        threads = int(os.getenv("DUCKDB_THREADS", "2"))
+        temp_dir = Path(os.getenv("DUCKDB_TEMP_DIRECTORY", str(BASE / ".cache" / "duckdb")))
+        if not temp_dir.is_absolute(): temp_dir = (BASE / temp_dir).resolve()
+        candidate_store = AggregateParquetStore.from_remote_glob(raw, memory_limit, threads, temp_dir)
+        with LOCK:
+            old_store = PARQUET_STORE
+            PARQUET_STORE = candidate_store
+            DATA = pd.DataFrame()
+            DATA_KIND = "aggregated_grid"
+            DATA_COLUMNS = candidate_store.columns
+        if old_store is not None:
+            old_store.close()
+        return candidate_store.rows
+
     configured = Path(path) if path else DATA_FILE
     if not configured.is_absolute(): configured = (BASE / configured).resolve()
     if configured.is_dir():
