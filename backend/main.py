@@ -1,15 +1,18 @@
 """FastAPI service for harmonized MODIS/VIIRS hotspot exploration."""
 from pathlib import Path
 from io import BytesIO, StringIO
+import glob
 import os
 import threading
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from parquet_store import AGGREGATED_COLUMNS, AggregateParquetStore
 
 BASE = Path(__file__).resolve().parent
 load_dotenv(BASE / ".env")
@@ -21,6 +24,7 @@ LOCK = threading.RLock()
 DATA = pd.DataFrame()
 DATA_COLUMNS = REQUIRED
 DATA_KIND = "hotspots"
+PARQUET_STORE: AggregateParquetStore | None = None
 app = FastAPI(title="Harmonized Hotspot Observatory", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -66,9 +70,53 @@ def normalize(frame: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 def load_data(path=None):
-    global DATA, DATA_FILE
-    p = Path(path) if path else DATA_FILE
-    if not p.is_absolute(): p = (BASE / p).resolve()
+    global DATA, DATA_FILE, DATA_KIND, DATA_COLUMNS, PARQUET_STORE
+    configured = Path(path) if path else DATA_FILE
+    if not configured.is_absolute(): configured = (BASE / configured).resolve()
+    if configured.is_dir():
+        candidates = sorted(configured.rglob("*.parquet"))
+        if not candidates: candidates = sorted(configured.rglob("*.csv"))
+    elif any(mark in str(configured) for mark in ("*", "?", "[")):
+        candidates = [Path(item) for item in sorted(glob.glob(str(configured), recursive=True))]
+    else:
+        candidates = [configured] if configured.is_file() else []
+    if not candidates:
+        raise RuntimeError(f"Could not load dataset {configured}: no CSV or Parquet files found")
+
+    parquet_files = [candidate for candidate in candidates if candidate.suffix.lower() in {".parquet", ".pq"}]
+    csv_files = [candidate for candidate in candidates if candidate.suffix.lower() == ".csv"]
+    if parquet_files and csv_files:
+        candidates = parquet_files
+    if len(candidates) > 1 and len(parquet_files) != len(candidates):
+        raise RuntimeError("A dataset directory with multiple files must contain only Parquet files")
+
+    if parquet_files:
+        try:
+            schema_columns = set(pq.read_schema(parquet_files[0]).names)
+            if AGGREGATED_COLUMNS.issubset(schema_columns):
+                memory_limit = os.getenv("DUCKDB_MEMORY_LIMIT", "768MB")
+                threads = int(os.getenv("DUCKDB_THREADS", "2"))
+                temp_dir = Path(os.getenv("DUCKDB_TEMP_DIRECTORY", str(BASE / ".cache" / "duckdb")))
+                if not temp_dir.is_absolute(): temp_dir = (BASE / temp_dir).resolve()
+                candidate_store = AggregateParquetStore(parquet_files, memory_limit, threads, temp_dir)
+                with LOCK:
+                    old_store = PARQUET_STORE
+                    PARQUET_STORE = candidate_store
+                    DATA = pd.DataFrame()
+                    DATA_KIND = "aggregated_grid"
+                    DATA_COLUMNS = candidate_store.columns
+                    DATA_FILE = configured
+                if old_store is not None:
+                    old_store.close()
+                return candidate_store.rows
+            if len(parquet_files) > 1:
+                raise ValueError("Multiple raw hotspot Parquet files are not supported; use the harmonized aggregate schema")
+        except Exception as e:
+            raise RuntimeError(f"Could not open Parquet dataset {configured}: {e}") from e
+
+    if len(candidates) > 1:
+        raise RuntimeError("A dataset directory with multiple CSV files is not supported")
+    p = candidates[0]
     try:
         if p.suffix.lower() in {".parquet", ".pq"}:
             try:
@@ -81,7 +129,13 @@ def load_data(path=None):
             raise ValueError("Dataset path must point to a .csv or .parquet file")
         frame = normalize(frame)
     except Exception as e: raise RuntimeError(f"Could not load dataset {p}: {e}") from e
-    with LOCK: DATA, DATA_FILE = frame, p
+    with LOCK:
+        old_store = PARQUET_STORE
+        PARQUET_STORE = None
+        DATA, DATA_FILE, DATA_KIND = frame, p, DATA_KIND
+        DATA_COLUMNS = list(frame.columns) if DATA_KIND == "aggregated_grid" else REQUIRED
+    if old_store is not None:
+        old_store.close()
     return len(frame)
 
 @app.on_event("startup")
@@ -106,11 +160,40 @@ def serialize(df):
     result = df.copy(); result["acq_date"] = result.date.dt.strftime("%Y-%m-%d")
     return result[REQUIRED + ["hotspot_count","confidence_label","confidence_score"]].replace({np.nan: None}).to_dict("records")
 
+def dataset_metadata():
+    if PARQUET_STORE is not None:
+        return PARQUET_STORE.metadata
+    years = sorted(int(value) for value in DATA.year.dropna().unique()) if len(DATA) and "year" in DATA else []
+    dates = DATA.date if len(DATA) and "date" in DATA else pd.Series(dtype="datetime64[ns]")
+    return {
+        "dataset_kind": DATA_KIND,
+        "rows": len(DATA),
+        "file_count": 1 if len(DATA) else 0,
+        "file_names": [DATA_FILE.name] if len(DATA) else [],
+        "file_bytes": DATA_FILE.stat().st_size if DATA_FILE.is_file() else 0,
+        "available_years": years,
+        "min_date": dates.min().date().isoformat() if len(dates) and dates.notna().any() else None,
+        "max_date": dates.max().date().isoformat() if len(dates) and dates.notna().any() else None,
+        "columns": DATA_COLUMNS,
+    }
+
 @app.get("/api/health")
-def health(): return {"status":"ok","rows":len(DATA),"data_file":str(DATA_FILE),"dataset_kind":DATA_KIND}
+def health():
+    metadata = dataset_metadata()
+    return {"status": "ok" if metadata["rows"] else "no_dataset", **metadata}
+
+@app.get("/api/metadata")
+def metadata():
+    return dataset_metadata()
 
 @app.get("/api/hotspots")
 def hotspots(start_date: str|None=None,end_date: str|None=None,min_lat: float|None=None,max_lat: float|None=None,min_lon: float|None=None,max_lon: float|None=None,min_frp: float|None=None,confidence: str|None=None,instrument: str|None=None,limit: int=Query(3000,ge=1,le=20000),include_summary: bool=True):
+    if PARQUET_STORE is not None:
+        return PARQUET_STORE.hotspots(
+            start_date=start_date, end_date=end_date, min_lat=min_lat, max_lat=max_lat,
+            min_lon=min_lon, max_lon=max_lon, min_frp=min_frp, confidence=confidence,
+            instrument=instrument, limit=limit, include_summary=include_summary,
+        )
     df = filtered(start_date,end_date,min_lat,max_lat,min_lon,max_lon,min_frp,confidence,instrument)
     rows = df.sample(n=limit, random_state=2026).sort_values("date") if len(df)>limit else df
     summary={"total":round(float(df.hotspot_count.sum()),2),"returned":len(rows),"mean_frp":round(float(df.frp.mean()),2) if len(df) else 0,"total_frp":round(float(df.frp.sum()),2) if len(df) else 0,"high_confidence":int(df.confidence_label.eq("High").sum())} if include_summary else None
@@ -119,6 +202,8 @@ def hotspots(start_date: str|None=None,end_date: str|None=None,min_lat: float|No
 @app.get("/api/calendar")
 def calendar(min_lat:float|None=None,max_lat:float|None=None,min_lon:float|None=None,max_lon:float|None=None,metric:str="count"):
     if metric not in {"count","mean_frp","total_frp"}: raise HTTPException(400,"metric must be count, mean_frp, or total_frp")
+    if PARQUET_STORE is not None:
+        return PARQUET_STORE.calendar(metric=metric, min_lat=min_lat, max_lat=max_lat, min_lon=min_lon, max_lon=max_lon)
     df=filtered(min_lat=min_lat,max_lat=max_lat,min_lon=min_lon,max_lon=max_lon)
     if metric == "count":
         grouped=df.groupby(["year","month"]).hotspot_count.sum().rename("value").reset_index()
@@ -138,6 +223,11 @@ def calendar(min_lat:float|None=None,max_lat:float|None=None,min_lon:float|None=
 @app.get("/api/anomalies")
 def anomalies(min_lat:float|None=None,max_lat:float|None=None,min_lon:float|None=None,max_lon:float|None=None,target_year:int=2026,target_month:int=7):
     if target_month<1 or target_month>12: raise HTTPException(400,"target_month must be 1-12")
+    if PARQUET_STORE is not None:
+        return PARQUET_STORE.anomalies(
+            target_year=target_year, target_month=target_month,
+            min_lat=min_lat, max_lat=max_lat, min_lon=min_lon, max_lon=max_lon,
+        )
     df=filtered(min_lat=min_lat,max_lat=max_lat,min_lon=min_lon,max_lon=max_lon)
     monthly=df[df.month.eq(target_month)]; hist=monthly[monthly.year.ne(target_year)]
     current=monthly[monthly.year.eq(target_year)]; x=float(current.hotspot_count.sum()); vals=hist.groupby("year").hotspot_count.sum().astype(float)
@@ -151,6 +241,14 @@ def anomalies(min_lat:float|None=None,max_lat:float|None=None,min_lon:float|None
 
 @app.get("/api/export-csv")
 def export_csv(start_date:str|None=None,end_date:str|None=None,min_lat:float|None=None,max_lat:float|None=None,min_lon:float|None=None,max_lon:float|None=None,min_frp:float|None=None,confidence:str|None=None,instrument:str|None=None):
+    if PARQUET_STORE is not None:
+        chunks = PARQUET_STORE.export_chunks(filters={
+            "start_date": start_date, "end_date": end_date,
+            "min_lat": min_lat, "max_lat": max_lat, "min_lon": min_lon,
+            "max_lon": max_lon, "min_frp": min_frp,
+            "confidence": confidence, "instrument": instrument,
+        })
+        return StreamingResponse(chunks, media_type="text/csv", headers={"Content-Disposition":"attachment; filename=harmonized_hotspots.csv"})
     df=filtered(start_date,end_date,min_lat,max_lat,min_lon,max_lon,min_frp,confidence,instrument)
     stream=StringIO(); df[DATA_COLUMNS].to_csv(stream,index=False)
     stream.seek(0)
@@ -169,7 +267,13 @@ async def upload_dataset(file:UploadFile=File(...)):
     except Exception as e: raise HTTPException(400,str(e)) from e
     target=BASE/"data"/"uploaded_harmonized_hotspots.csv"; target.parent.mkdir(exist_ok=True)
     target.write_bytes(content)
-    with LOCK: global DATA, DATA_FILE; DATA,DATA_FILE=candidate,target
+    with LOCK:
+        global DATA, DATA_FILE, DATA_KIND, DATA_COLUMNS, PARQUET_STORE
+        old_store = PARQUET_STORE
+        PARQUET_STORE = None
+        DATA, DATA_FILE, DATA_KIND, DATA_COLUMNS = candidate, target, "hotspots", REQUIRED
+    if old_store is not None:
+        old_store.close()
     return {"status":"loaded","rows":len(candidate),"data_file":str(target)}
 
 @app.post("/api/reload-data")

@@ -6,3 +6,4 @@ python-dotenv
 python-multipart
 pydantic
 pyarrow
+duckdb>=1.2,<2
