@@ -28,10 +28,8 @@ def normalize(frame: pd.DataFrame) -> pd.DataFrame:
     global DATA_COLUMNS, DATA_KIND
     if set(AGGREGATED).issubset(frame.columns):
         DATA_KIND = "aggregated_grid"
-        DATA_COLUMNS = list(frame.columns)
-        # load_data owns this freshly-read frame, so normalize in place instead
-        # of duplicating every source column (notably large harmonized Parquet files).
-        df = frame
+        DATA_COLUMNS = AGGREGATED
+        df = frame[AGGREGATED].copy()
         df["frp"] = pd.to_numeric(df.harmonized_frp, errors="coerce")
         df["hotspot_count"] = pd.to_numeric(df.harmonized_detections, errors="coerce")
         # This product is already harmonized and aggregated. Raw sensor fields
@@ -40,7 +38,7 @@ def normalize(frame: pd.DataFrame) -> pd.DataFrame:
         df["acq_time"] = ""
         df["satellite"] = "HARMONIZED"
         df["instrument"] = "MODIS_VIIRS_HARM"
-        df["confidence"] = df["confidence_max_cat"].fillna("all").astype(str) if "confidence_max_cat" in df else "all"
+        df["confidence"] = "all"
         df["version"] = "1"
         df["daynight"] = ""
         df["type"] = 0
@@ -59,17 +57,8 @@ def normalize(frame: pd.DataFrame) -> pd.DataFrame:
     df["year"] = df.date.dt.year.astype("int16"); df["month"] = df.date.dt.month.astype("int8")
     c = df.confidence.astype(str).str.lower()
     if DATA_KIND == "aggregated_grid":
-        confidence_counts={"Low":"n_low_conf","Nominal":"n_nominal_conf","High":"n_high_conf"}
-        if all(col in df.columns for col in confidence_counts.values()):
-            has_high=pd.to_numeric(df.n_high_conf,errors="coerce").fillna(0).gt(0)
-            has_nominal=pd.to_numeric(df.n_nominal_conf,errors="coerce").fillna(0).gt(0)
-            has_low=pd.to_numeric(df.n_low_conf,errors="coerce").fillna(0).gt(0)
-            df["confidence_label"]=np.select([has_high,has_nominal,has_low],["High","Nominal","Low"],default="All confidence")
-            df["confidence"]=df.confidence_label.map({"High":"h","Nominal":"n","Low":"l"}).fillna("all")
-            df["confidence_score"]=pd.to_numeric(df.get("confidence_numeric_max",0),errors="coerce").fillna(0).astype("int16")
-        else:
-            df["confidence_label"] = "All confidence"
-            df["confidence_score"] = 0
+        df["confidence_label"] = "All confidence"
+        df["confidence_score"] = 0
     else:
         df["confidence_label"] = c.map({"l":"Low","n":"Nominal","h":"High"}).fillna("Numeric")
         df["confidence_score"] = pd.to_numeric(c, errors="coerce").fillna(c.map({"l":25,"n":65,"h":90})).fillna(0).astype("int8")
@@ -109,20 +98,9 @@ def filtered(start_date=None, end_date=None, min_lat=None, max_lat=None, min_lon
     mask = np.ones(len(df), dtype=bool)
     for col, value, op in [("date",start_date,"ge"),("date",end_date,"le"),("latitude",min_lat,"ge"),("latitude",max_lat,"le"),("longitude",min_lon,"ge"),("longitude",max_lon,"le"),("frp",min_frp,"ge")]:
         if value is not None: mask &= getattr(df[col], op)(pd.to_datetime(value) if col=="date" else value).to_numpy()
-    if confidence:
-        confidence_key=confidence.lower()
-        count_column={"low":"n_low_conf","nominal":"n_nominal_conf","high":"n_high_conf"}.get(confidence_key)
-        if DATA_KIND=="aggregated_grid" and count_column in df.columns:
-            mask &= pd.to_numeric(df[count_column],errors="coerce").fillna(0).gt(0).to_numpy()
-        else:
-            mask &= df.confidence_label.str.lower().eq(confidence_key).to_numpy() | df.confidence.astype(str).str.lower().eq(confidence_key).to_numpy()
+    if confidence: mask &= df.confidence_label.str.lower().eq(confidence.lower()).to_numpy() | df.confidence.astype(str).str.lower().eq(confidence.lower()).to_numpy()
     if instrument: mask &= df.instrument.str.contains(instrument, case=False, regex=False).to_numpy()
-    result=df.loc[mask]
-    if confidence and DATA_KIND=="aggregated_grid":
-        count_column={"low":"n_low_conf","nominal":"n_nominal_conf","high":"n_high_conf"}.get(confidence.lower())
-        if count_column in result.columns:
-            result=result.copy(); result["hotspot_count"]=pd.to_numeric(result[count_column],errors="coerce").fillna(0).astype("float32")
-    return result
+    return df.loc[mask]
 
 def serialize(df):
     result = df.copy(); result["acq_date"] = result.date.dt.strftime("%Y-%m-%d")
